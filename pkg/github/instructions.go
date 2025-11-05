@@ -65,42 +65,60 @@ Use 'list_discussion_categories' to understand available categories before creat
 	case "projects":
 		return `## Projects
 
-When using 'list_project_items', follow these guidelines:
+Read Tools:
+	- list_projects
+	- get_project
+	- list_project_fields
+	- get_project_field
+	- list_project_items
+	- get_project_item
+Write Tools:
+	- add_project_item
+	- update_project_item
+	- delete_project_item
 
-	Field usage:
+Field usage:
 	- Call list_project_fields first to understand available fields and get IDs/types before filtering.
 	- Use EXACT returned field names (case-insensitive match). Don't invent names or IDs.
 	- Iteration synonyms (sprint/cycle/iteration) only if that field exists; map to the actual name (e.g. sprint:@current).
 	- Only include filters for fields that exist and are relevant.
 
-	Pagination (mandatory):
-	- Loop while pageInfo.hasNextPage=true using after=nextCursor. Keep query, fields, per_page IDENTICAL each page.
+Pagination (mandatory):
+	Forward (normal) flow:
+	- Loop while pageInfo.hasNextPage=true using after=pageInfo.nextCursor.
+	- Keep query, fields, per_page IDENTICAL on every page.
+	Backward (rare) flow:
+	- Use before=pageInfo.prevCursor only when explicitly navigating to a previous page.
+	Parameters:
+	- per_page: results per page (max 50). Choose a stable value; do not change mid-sequence.
+	- after: forward cursor from prior response (pageInfo.nextCursor).
+	- before: backward cursor from prior response (pageInfo.prevCursor); seldom needed.
 
-	Fields parameter:
+Fields parameter:
 	- Include field IDs on EVERY paginated list_project_items call if you need values. Omit → title only.
 
-	Counting rules:
+Counting rules:
 	- Count items array length after full pagination.
 	- If multi-page: collect all pages, dedupe by item.id (fallback node_id) before totals.
 	- Never count field objects, content, or nested arrays as separate items.
 	- item.id = project item ID (for updates/deletes). item.content.id = underlying issue/PR ID.
 
-	Summary vs list:
+Summary vs list:
 	- Summaries ONLY if user uses verbs: analyze | summarize | summary | report | overview | insights.
-	- Listing verbs (list/show/get/fetch/display/enumerate) → just enumerate + total.
+	- Listing verbs (list/show/get/fetch/display/enumerate) → enumerate + total.
 
-	Examples:
+Examples:
 	- list_projects: "roadmap is:open"
 	- list_project_items: state:open is:issue sprint:@current priority:high updated:>@today-7d
 
-	Self-check before returning:
+Self-check before returning:
 	- Paginated fully
 	- Dedupe by id/node_id
 	- Correct IDs used
 	- Field names valid
 	- Summary only if requested.
 
-	Return COMPLETE data or state what's missing (e.g. pages skipped).`
+Return COMPLETE data or state what's missing (e.g. pages skipped).`
 	default:
 		return ""
 	}
