@@ -23,11 +23,12 @@ const (
 	ProjectAddFailedError    = "failed to add a project item"
 	ProjectDeleteFailedError = "failed to delete a project item"
 	ProjectListFailedError   = "failed to list project items"
+	MaxProjectsPerPage       = 50
 )
 
 func ListProjects(getClient GetClientFn, t translations.TranslationHelperFunc) (tool mcp.Tool, handler server.ToolHandlerFunc) {
 	return mcp.NewTool("list_projects",
-			mcp.WithDescription(t("TOOL_LIST_PROJECTS_DESCRIPTION", "List Projects for a user or org")),
+			mcp.WithDescription(t("TOOL_LIST_PROJECTS_DESCRIPTION", `List Projects for a user or organization`)),
 			mcp.WithToolAnnotation(mcp.ToolAnnotation{
 				Title:        t("TOOL_LIST_PROJECTS_USER_TITLE", "List projects"),
 				ReadOnlyHint: ToBoolPtr(true),
@@ -40,28 +41,45 @@ func ListProjects(getClient GetClientFn, t translations.TranslationHelperFunc) (
 				mcp.Description("If owner_type == user it is the handle for the GitHub user account. If owner_type == org it is the name of the organization. The name is not case sensitive."),
 			),
 			mcp.WithString("query",
-				mcp.Description("Filter projects by a search query (matches title and description)"),
+				mcp.Description(`Filter projects by a search query
+				
+Scope: title text + open/closed state.
+PERMITTED qualifiers: is:open, is:closed (state), simple title terms.
+FORBIDDEN: is:issue, is:pr, assignee:, label:, status:, sprint-name:, parent-issue:, team-name:, priority:, etc.
+Examples:
+	- roadmap is:open
+	- is:open feature planning`),
 			),
 			mcp.WithNumber("per_page",
-				mcp.Description("Number of results per page (max 100, default: 30)"),
+				mcp.Description(fmt.Sprintf("Results per page (max %d). Keep constant across paginated requests; changing mid-sequence can complicate page traversal.", MaxProjectsPerPage)),
+			),
+			mcp.WithString("after",
+				mcp.Description("Forward pagination cursor. Use when the previous response's pageInfo.hasNextPage=true. Supply pageInfo.nextCursor as 'after' and immediately request the next page. LOOP UNTIL pageInfo.hasNextPage=false (don't stop early). Keep query and per_page identical for every page."),
+			),
+			mcp.WithString("before",
+				mcp.Description("Backward pagination cursor (rare): supply to move to the preceding page using pageInfo.prevCursor. Not needed for normal forward iteration."),
 			),
 		), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			owner, err := RequiredParam[string](req, "owner")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			ownerType, err := RequiredParam[string](req, "owner_type")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			queryStr, err := OptionalParam[string](req, "query")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			perPage, err := OptionalIntParamWithDefault(req, "per_page", 30)
+
+			pagination, err := extractPaginationOptions(req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			client, err := getClient(ctx)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -77,7 +95,7 @@ func ListProjects(getClient GetClientFn, t translations.TranslationHelperFunc) (
 
 			minimalProjects := []MinimalProject{}
 			opts := &github.ListProjectsOptions{
-				ListProjectsPaginationOptions: github.ListProjectsPaginationOptions{PerPage: &perPage},
+				ListProjectsPaginationOptions: pagination,
 				Query:                         queryPtr,
 			}
 
@@ -100,14 +118,12 @@ func ListProjects(getClient GetClientFn, t translations.TranslationHelperFunc) (
 				minimalProjects = append(minimalProjects, *convertToMinimalProject(project))
 			}
 
-			if resp.StatusCode != http.StatusOK {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read response body: %w", err)
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("failed to list projects: %s", string(body))), nil
+			response := map[string]any{
+				"projects": minimalProjects,
+				"pageInfo": buildPageInfo(resp),
 			}
-			r, err := json.Marshal(minimalProjects)
+
+			r, err := json.Marshal(response)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal response: %w", err)
 			}
@@ -213,25 +229,35 @@ func ListProjectFields(getClient GetClientFn, t translations.TranslationHelperFu
 				mcp.Description("The project's number."),
 			),
 			mcp.WithNumber("per_page",
-				mcp.Description("Number of results per page (max 100, default: 30)"),
+				mcp.Description(fmt.Sprintf("Results per page (max %d). Keep constant across paginated requests; changing mid-sequence can complicate page traversal.", MaxProjectsPerPage)),
+			),
+			mcp.WithString("after",
+				mcp.Description("Forward pagination cursor. Use when the previous response's pageInfo.hasNextPage=true. Supply pageInfo.nextCursor as 'after' and immediately request the next page. LOOP UNTIL pageInfo.hasNextPage=false (don't stop early). Keep per_page identical for every page."),
+			),
+			mcp.WithString("before",
+				mcp.Description("Backward pagination cursor (rare): supply to move to the preceding page using pageInfo.prevCursor. Not needed for normal forward iteration."),
 			),
 		), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			owner, err := RequiredParam[string](req, "owner")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			ownerType, err := RequiredParam[string](req, "owner_type")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			projectNumber, err := RequiredInt(req, "project_number")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			perPage, err := OptionalIntParamWithDefault(req, "per_page", 30)
+
+			pagination, err := extractPaginationOptions(req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			client, err := getClient(ctx)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -241,7 +267,7 @@ func ListProjectFields(getClient GetClientFn, t translations.TranslationHelperFu
 			var projectFields []*github.ProjectV2Field
 
 			opts := &github.ListProjectsOptions{
-				ListProjectsPaginationOptions: github.ListProjectsPaginationOptions{PerPage: &perPage},
+				ListProjectsPaginationOptions: pagination,
 			}
 
 			if ownerType == "org" {
@@ -259,14 +285,12 @@ func ListProjectFields(getClient GetClientFn, t translations.TranslationHelperFu
 			}
 			defer func() { _ = resp.Body.Close() }()
 
-			if resp.StatusCode != http.StatusOK {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read response body: %w", err)
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("failed to list project fields: %s", string(body))), nil
+			response := map[string]any{
+				"fields":   projectFields,
+				"pageInfo": buildPageInfo(resp),
 			}
-			r, err := json.Marshal(projectFields)
+
+			r, err := json.Marshal(response)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal response: %w", err)
 			}
@@ -354,7 +378,7 @@ func GetProjectField(getClient GetClientFn, t translations.TranslationHelperFunc
 
 func ListProjectItems(getClient GetClientFn, t translations.TranslationHelperFunc) (tool mcp.Tool, handler server.ToolHandlerFunc) {
 	return mcp.NewTool("list_project_items",
-			mcp.WithDescription(t("TOOL_LIST_PROJECT_ITEMS_DESCRIPTION", "List Project items for a user or org")),
+			mcp.WithDescription(t("TOOL_LIST_PROJECT_ITEMS_DESCRIPTION", `Search project items with advanced filtering`)),
 			mcp.WithToolAnnotation(mcp.ToolAnnotation{
 				Title:        t("TOOL_LIST_PROJECT_ITEMS_USER_TITLE", "List project items"),
 				ReadOnlyHint: ToBoolPtr(true),
@@ -372,13 +396,60 @@ func ListProjectItems(getClient GetClientFn, t translations.TranslationHelperFun
 				mcp.Description("The project's number."),
 			),
 			mcp.WithString("query",
-				mcp.Description("Search query to filter items"),
+				mcp.Description(`Query string - For advanced filtering of project items using GitHub's search syntax:
+
+MUST reflect user intent; strongly prefer explicit content type if narrowed:
+	- "open issues" → state:open is:issue
+	- "merged PRs" → state:merged is:pr
+	- "items updated this week" → updated:>@today-7d (omit type only if mixed desired)
+	- "list all P1 priority items" → priority:p1 (omit state if user wants all, omit type if user specifies "items")
+	- "list all open P2 issues" → is:issue state:open priority:p2 (include state if user wants open or closed, include type if user specifies "issues" or "PRs")
+	- "all open issues I'm working on" → is:issue state:open assignee:@me
+
+Query Construction Heuristics:
+	a. Extract type nouns: issues → is:issue | PRs, Pulls, or Pull Requests → is:pr | tasks/tickets → is:issue (ask if ambiguity)
+	b. Map temporal phrases: "this week" → updated:>@today-7d
+	c. Map negations: "excluding wontfix" → -label:wontfix
+	d. Map priority adjectives: "high/sev1/p1" → priority:high OR priority:p1 (choose based on field presence)
+	e. When filtering by label, always use wildcard matching to account for cross-repository differences or emojis: (e.g. "bug 🐛" → label:*bug*)
+	f. When filtering by milestone, always use wildcard matching to account for cross-repository differences: (e.g. "v1.0" → milestone:*v1.0*)
+
+Syntax Essentials (items):
+   AND: space-separated. (label:bug priority:high).
+   OR: comma inside one qualifier (label:bug,critical).
+   NOT: leading '-' (-label:wontfix).
+   Hyphenate multi-word field names. (team-name:"Backend Team", story-points:>5).
+   Quote multi-word values. (status:"In Review" team-name:"Backend Team").
+   Ranges: points:1..3, updated:<@today-30d.
+   Wildcards: title:*crash*, label:bug*.
+	 Assigned to User: assignee:@me | assignee:username | no:assignee
+
+Common Qualifier Glossary (items):
+   is:issue | is:pr | state:open|closed|merged | assignee:@me|username | label:NAME | status:VALUE |
+   priority:p1|high | sprint-name:@current | team-name:"Backend Team" | parent-issue:"org/repo#123" |
+   updated:>@today-7d | title:*text* | -label:wontfix | label:bug,critical | no:assignee | has:label
+
+Pagination Mandate:
+   Do not analyze until ALL pages fetched (loop while pageInfo.hasNextPage=true). Always reuse identical query, fields, per_page.
+
+Recovery Guidance:
+   If user provides ambiguous request ("show project activity") → ask clarification OR return mixed set (omit is:issue/is:pr). If user mixes project + item qualifiers in one phrase → split: run list_projects for discovery, then list_project_items for detail.
+
+Never:
+   - Infer field IDs; fetch via list_project_fields.
+   - Drop 'fields' param on subsequent pages if field values are needed.`),
 			),
 			mcp.WithNumber("per_page",
-				mcp.Description("Number of results per page (max 100, default: 30)"),
+				mcp.Description(fmt.Sprintf("Results per page (max %d). Keep constant across paginated requests; changing mid-sequence can complicate page traversal.", MaxProjectsPerPage)),
+			),
+			mcp.WithString("after",
+				mcp.Description("Forward pagination cursor. Use when the previous response's pageInfo.hasNextPage=true. Supply pageInfo.nextCursor as 'after' and immediately request the next page. LOOP UNTIL pageInfo.hasNextPage=false (don't stop early). Keep query, fields, and per_page identical for every page."),
+			),
+			mcp.WithString("before",
+				mcp.Description("Backward pagination cursor (rare): supply to move to the preceding page using pageInfo.prevCursor. Not needed for normal forward iteration."),
 			),
 			mcp.WithArray("fields",
-				mcp.Description("Specific list of field IDs to include in the response (e.g. [\"102589\", \"985201\", \"169875\"]). If not provided, only the title field is included."),
+				mcp.Description("Field IDs to include (e.g. [\"102589\", \"985201\"]). CRITICAL: Always provide to get field values. Without this, only titles returned. Get IDs from list_project_fields first."),
 				mcp.WithStringItems(),
 			),
 		), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -386,26 +457,32 @@ func ListProjectItems(getClient GetClientFn, t translations.TranslationHelperFun
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			ownerType, err := RequiredParam[string](req, "owner_type")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			projectNumber, err := RequiredInt(req, "project_number")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			perPage, err := OptionalIntParamWithDefault(req, "per_page", 30)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
+
 			queryStr, err := OptionalParam[string](req, "query")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			fields, err := OptionalBigIntArrayParam(req, "fields")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
+			pagination, err := extractPaginationOptions(req)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+
 			client, err := getClient(ctx)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -422,7 +499,7 @@ func ListProjectItems(getClient GetClientFn, t translations.TranslationHelperFun
 			opts := &github.ListProjectItemsOptions{
 				Fields: fields,
 				ListProjectsOptions: github.ListProjectsOptions{
-					ListProjectsPaginationOptions: github.ListProjectsPaginationOptions{PerPage: &perPage},
+					ListProjectsPaginationOptions: pagination,
 					Query:                         queryPtr,
 				},
 			}
@@ -442,15 +519,12 @@ func ListProjectItems(getClient GetClientFn, t translations.TranslationHelperFun
 			}
 			defer func() { _ = resp.Body.Close() }()
 
-			if resp.StatusCode != http.StatusOK {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read response body: %w", err)
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("%s: %s", ProjectListFailedError, string(body))), nil
+			response := map[string]any{
+				"items":    projectItems,
+				"pageInfo": buildPageInfo(resp),
 			}
 
-			r, err := json.Marshal(projectItems)
+			r, err := json.Marshal(response)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal response: %w", err)
 			}
@@ -492,10 +566,12 @@ func GetProjectItem(getClient GetClientFn, t translations.TranslationHelperFunc)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			ownerType, err := RequiredParam[string](req, "owner_type")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+
 			projectNumber, err := RequiredInt(req, "project_number")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -549,13 +625,6 @@ func GetProjectItem(getClient GetClientFn, t translations.TranslationHelperFunc)
 			}
 			defer func() { _ = resp.Body.Close() }()
 
-			if resp.StatusCode != http.StatusOK {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read response body: %w", err)
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("failed to get project item: %s", string(body))), nil
-			}
 			r, err := json.Marshal(projectItem)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal response: %w", err)
@@ -857,10 +926,10 @@ type updateProjectItem struct {
 }
 
 type projectV2ItemFieldValue struct {
-	ID       *int64      `json:"id,omitempty"`        // The unique identifier for this field.
-	Name     string      `json:"name,omitempty"`      // The display name of the field.
-	DataType string      `json:"data_type,omitempty"` // The data type of the field (e.g., "text", "number", "date", "single_select", "multi_select").
-	Value    interface{} `json:"value,omitempty"`     // The value of the field for a specific project item.
+	ID       *int64 `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	DataType string `json:"data_type,omitempty"`
+	Value    any    `json:"value,omitempty"`
 }
 
 type projectV2Item struct {
@@ -885,12 +954,18 @@ type projectV2ItemContent struct {
 	CreatedAt   *github.Timestamp `json:"created_at,omitempty"`
 	ID          *int64            `json:"id,omitempty"`
 	Number      *int              `json:"number,omitempty"`
-	Repository  MinimalRepository `json:"repository,omitempty"`
 	State       *string           `json:"state,omitempty"`
 	StateReason *string           `json:"stateReason,omitempty"`
 	Title       *string           `json:"title,omitempty"`
 	UpdatedAt   *github.Timestamp `json:"updated_at,omitempty"`
 	URL         *string           `json:"url,omitempty"`
+}
+
+type pageInfo struct {
+	HasNextPage     bool   `json:"hasNextPage"`
+	HasPreviousPage bool   `json:"hasPreviousPage"`
+	NextCursor      string `json:"nextCursor,omitempty"`
+	PrevCursor      string `json:"prevCursor,omitempty"`
 }
 
 func toNewProjectType(projType string) string {
@@ -928,6 +1003,41 @@ func buildUpdateProjectItem(input map[string]any) (*updateProjectItem, error) {
 	return payload, nil
 }
 
+func buildPageInfo(resp *github.Response) pageInfo {
+	return pageInfo{
+		HasNextPage:     resp.After != "",
+		HasPreviousPage: resp.Before != "",
+		NextCursor:      resp.After,
+		PrevCursor:      resp.Before,
+	}
+}
+
+func extractPaginationOptions(request mcp.CallToolRequest) (github.ListProjectsPaginationOptions, error) {
+	perPage, err := OptionalIntParamWithDefault(request, "per_page", MaxProjectsPerPage)
+	if err != nil {
+		return github.ListProjectsPaginationOptions{}, err
+	}
+	if perPage > MaxProjectsPerPage {
+		perPage = MaxProjectsPerPage
+	}
+
+	after, err := OptionalParam[string](request, "after")
+	if err != nil {
+		return github.ListProjectsPaginationOptions{}, err
+	}
+
+	before, err := OptionalParam[string](request, "before")
+	if err != nil {
+		return github.ListProjectsPaginationOptions{}, err
+	}
+
+	return github.ListProjectsPaginationOptions{
+		PerPage: &perPage,
+		After:   &after,
+		Before:  &before,
+	}, nil
+}
+
 // addOptions adds the parameters in opts as URL query parameters to s. opts
 // must be a struct whose fields may contain "url" tags.
 func addOptions(s string, opts any) (string, error) {
@@ -962,10 +1072,9 @@ func addOptions(s string, opts any) (string, error) {
 
 func ManageProjectItemsPrompt(t translations.TranslationHelperFunc) (tool mcp.Prompt, handler server.PromptHandlerFunc) {
 	return mcp.NewPrompt("ManageProjectItems",
-			mcp.WithPromptDescription(t("PROMPT_MANAGE_PROJECT_ITEMS_DESCRIPTION", "Interactive guide for managing GitHub Projects V2, including discovery, field management, querying, and updates.")),
+			mcp.WithPromptDescription(t("PROMPT_MANAGE_PROJECT_ITEMS_DESCRIPTION", "Guide for GitHub Projects V2: discovery, fields, querying, updates.")),
 			mcp.WithArgument("owner", mcp.ArgumentDescription("The owner of the project (user or organization name)"), mcp.RequiredArgument()),
 			mcp.WithArgument("owner_type", mcp.ArgumentDescription("Type of owner: 'user' or 'org'"), mcp.RequiredArgument()),
-			mcp.WithArgument("task", mcp.ArgumentDescription("Optional: specific task to focus on (e.g., 'discover_projects', 'update_items', 'create_reports')")),
 		), func(_ context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 			owner := request.Params.Arguments["owner"]
 			ownerType := request.Params.Arguments["owner_type"]
@@ -978,161 +1087,179 @@ func ManageProjectItemsPrompt(t translations.TranslationHelperFunc) (tool mcp.Pr
 			messages := []mcp.PromptMessage{
 				{
 					Role: "system",
-					Content: mcp.NewTextContent("You are a GitHub Projects V2 management assistant. Your expertise includes:\n\n" +
-						"**Core Capabilities:**\n" +
-						"- Project discovery and field analysis\n" +
-						"- Item querying with advanced filters\n" +
-						"- Field value updates and management\n" +
-						"- Progress reporting and insights\n\n" +
-						"**Key Rules:**\n" +
-						"- ALWAYS use the 'query' parameter in **list_project_items** to filter results effectively\n" +
-						"- ALWAYS include 'fields' parameter with specific field IDs to retrieve field values\n" +
-						"- Use proper field IDs (not names) when updating items\n" +
-						"- Provide step-by-step workflows with concrete examples\n\n" +
-						"**Understanding Project Items:**\n" +
-						"- Project items reference underlying content (issues or pull requests)\n" +
-						"- Project tools provide: project fields, item metadata, and basic content info\n" +
-						"- For detailed information about an issue or pull request (comments, events, etc.), use issue/PR specific tools\n" +
-						"- The 'content' field in project items includes: repository, issue/PR number, title, state\n" +
-						"- Use this info to fetch full details: **get_issue**, **list_comments**, **list_issue_events**\n\n" +
-						"**Available Tools:**\n" +
-						"- **list_projects**: Discover available projects\n" +
-						"- **get_project**: Get detailed project information\n" +
-						"- **list_project_fields**: Get field definitions and IDs\n" +
-						"- **list_project_items**: Query items with filters and field selection\n" +
-						"- **get_project_item**: Get specific item details\n" +
-						"- **add_project_item**: Add issues/PRs to projects\n" +
-						"- **update_project_item**: Update field values\n" +
-						"- **delete_project_item**: Remove items from projects"),
+					Content: mcp.NewTextContent(`System guide: GitHub Projects V2.
+Goal: Pick correct tool, fetch COMPLETE data (no early pagination stop), apply accurate filters, and count items correctly.
+
+Available tools (9 total):
+
+Read-only tools:
+- list_projects: List all projects for a user/org
+- get_project: Get details of a single project by project_number
+- list_project_fields: List all fields in a project (CALL THIS FIRST before filtering)
+- get_project_field: Get details of a single field by field_id
+- list_project_items: List items (issues/PRs) in a project with filtering & field values
+- get_project_item: Get a single item by item_id
+
+Write tools:
+- add_project_item: Add an issue or PR to a project
+- update_project_item: Update field values for an item (status, priority, etc.)
+- delete_project_item: Remove an item from a project
+
+Core rules:
+- list_projects: NEVER include item-level filters (no is:issue, assignee:, label:, etc.)
+- Before filtering on fields, call list_project_fields to get field IDs
+- Always paginate until pageInfo.hasNextPage=false
+- Keep query, fields, per_page identical across pages
+- Include field IDs on every list_project_items page if you need values
+- Prefer explicit is:issue / is:pr unless mixed set requested
+- Only summarize if verbs like analyze / summarize / report / overview / insights appear; otherwise enumerate
+
+Field resolution:
+- Use exact returned field names; don't invent
+- Iteration synonyms map to actual existing name (Sprint → sprint:@current, etc.). If none exist, omit
+- Only add filters for fields that exist and matter to the user goal
+
+Query syntax essentials:
+AND space | OR comma | NOT prefix - | quote multi-word values | hyphenate names | ranges points:1..5 | comparisons updated:>@today-7d priority:>1 | wildcards title:*crash*
+
+Pagination pattern:
+Call list_project_items → if hasNextPage true, repeat with after=nextCursor → stop only when false → then count/deduplicate
+
+Counting:
+- Items array length after full pagination (dedupe by item.id or node_id)
+- Never count fields array, content, assignees, labels as separate items
+- item.id = project item identifier; content.id = underlying issue/PR id
+
+Edge handling:
+Empty pages → total=0 still return pageInfo
+Duplicates → keep first for totals
+Missing field values → null/omit, never fabricate
+
+Self-check: paginated? deduped? correct IDs? field names valid? summary allowed?`),
 				},
 				{
 					Role: "user",
-					Content: mcp.NewTextContent(fmt.Sprintf("I want to work with GitHub Projects for %s (owner_type: %s).%s\n\n"+
-						"Help me get started with project management tasks.",
+					Content: mcp.NewTextContent(fmt.Sprintf("I want to work with GitHub Projects for %s (owner_type: %s).%s",
 						owner,
 						ownerType,
 						func() string {
 							if task != "" {
-								return fmt.Sprintf(" I'm specifically interested in: %s.", task)
+								return fmt.Sprintf(" Focus: %s.", task)
 							}
 							return ""
 						}())),
 				},
 				{
-					Role: "assistant",
-					Content: mcp.NewTextContent(fmt.Sprintf("Perfect! I'll help you manage GitHub Projects for %s. Let me guide you through the essential workflows.\n\n"+
-						"**🔍 Step 1: Project Discovery**\n"+
-						"First, let's see what projects are available using **list_projects**.", owner)),
+					Role:    "assistant",
+					Content: mcp.NewTextContent("Start by listing projects: use list_projects tool with owner and owner_type parameters."),
 				},
 				{
 					Role:    "user",
-					Content: mcp.NewTextContent("Great! After seeing the projects, I want to understand how to work with project fields and items."),
+					Content: mcp.NewTextContent("How do I work with fields and items?"),
 				},
 				{
 					Role: "assistant",
-					Content: mcp.NewTextContent("**📋 Step 2: Understanding Project Structure**\n\n" +
-						"Once you select a project, I'll help you:\n\n" +
-						"1. **Get field information** using **list_project_fields**\n" +
-						"   - Find field IDs, names, and data types\n" +
-						"   - Understand available options for select fields\n" +
-						"   - Identify required vs. optional fields\n\n" +
-						"2. **Query project items** using **list_project_items**\n" +
-						"   - Filter by assignees: query=\"assignee:@me\"\n" +
-						"   - Filter by status: query=\"status:In Progress\"\n" +
-						"   - Filter by labels: query=\"label:bug\"\n" +
-						"   - Include specific fields: fields=[\"198354254\", \"198354255\"]\n\n" +
-						"**💡 Pro Tip:** Always specify the 'fields' parameter to get field values, not just titles!"),
+					Content: mcp.NewTextContent(`Fields & items workflow:
+1. Call list_project_fields to get field definitions → map lowercased name -> {id,type}
+2. Use only existing field names; no invention
+3. Iteration mapping: pick sprint/cycle/iteration only if present (sprint:@current etc.)
+4. Include only relevant fields (e.g. Priority + Label for high priority bugs)
+5. Build query after resolving fields ("last week" → updated:>@today-7d)
+6. Call list_project_items with query and field IDs → paginate until hasNextPage=false
+7. Keep query/fields/per_page stable across all pages
+8. Include field IDs on every page when you need their values
+Missing field? Omit or clarify—never guess.`),
 				},
 				{
 					Role:    "user",
-					Content: mcp.NewTextContent("How do I update field values? What about the different field types?"),
+					Content: mcp.NewTextContent("How do I update item field values?"),
 				},
 				{
 					Role: "assistant",
-					Content: mcp.NewTextContent("**✏️ Step 3: Updating Field Values**\n\n" +
-						"Use **update_project_item** with the updated_field parameter. The format varies by field type:\n\n" +
-						"**Text fields:**\n" +
-						"```json\n" +
-						"{\"id\": 123456, \"value\": \"Updated text content\"}\n" +
-						"```\n\n" +
-						"**Single-select fields:**\n" +
-						"```json\n" +
-						"{\"id\": 198354254, \"value\": 18498754}\n" +
-						"```\n" +
-						"*(Use option ID, not option name)*\n\n" +
-						"**Date fields:**\n" +
-						"```json\n" +
-						"{\"id\": 789012, \"value\": \"2024-03-15\"}\n" +
-						"```\n\n" +
-						"**Number fields:**\n" +
-						"```json\n" +
-						"{\"id\": 345678, \"value\": 5}\n" +
-						"```\n\n" +
-						"**Clear a field:**\n" +
-						"```json\n" +
-						"{\"id\": 123456, \"value\": null}\n" +
-						"```\n\n" +
-						"**⚠️ Important:** Use the internal project item_id (not issue/PR number) for updates!"),
+					Content: mcp.NewTextContent(`Updating fields (update_project_item tool):
+Input format: updated_field parameter with {id: <field_id>, value: <new_value>}
+Examples:
+- Text field: {"id":123,"value":"hello"}
+- Single-select: {"id":456,"value":789} (value is option ID, not name)
+- Number: {"id":321,"value":5}
+- Date: {"id":654,"value":"2025-03-15"}
+- Clear field: {"id":123,"value":null}
+
+Rules:
+- item_id parameter = project item ID (from list_project_items), NOT issue/PR ID
+- Get field IDs from list_project_fields first
+- For select/iteration fields, pass option/iteration ID as value, not the name
+- To add an item first: use add_project_item tool with issue/PR ID
+- To remove an item: use delete_project_item tool`),
 				},
 				{
 					Role:    "user",
-					Content: mcp.NewTextContent("Can you show me a complete workflow example?"),
+					Content: mcp.NewTextContent("Show me a workflow example."),
 				},
 				{
 					Role: "assistant",
-					Content: mcp.NewTextContent(fmt.Sprintf("**🔄 Complete Workflow Example**\n\n"+
-						"Here's how to find and update your assigned items:\n\n"+
-						"**Step 1:** Discover projects\n\n"+
-						"**list_projects** owner=\"%s\" owner_type=\"%s\"\n\n\n"+
-						"**Step 2:** Get project fields (using project #123)\n\n"+
-						"**list_project_fields** owner=\"%s\" owner_type=\"%s\" project_number=123\n\n"+
-						"*(Note the Status field ID, e.g., 198354254)*\n\n"+
-						"**Step 3:** Query your assigned items\n\n"+
-						"**list_project_items**\n"+
-						"  owner=\"%s\"\n"+
-						"  owner_type=\"%s\"\n"+
-						"  project_number=123\n"+
-						"  query=\"assignee:@me\"\n"+
-						"  fields=[\"198354254\", \"other_field_ids\"]\n\n\n"+
-						"**Step 4:** Update item status\n\n"+
-						"**update_project_item**\n"+
-						"  owner=\"%s\"\n"+
-						"  owner_type=\"%s\"\n"+
-						"  project_number=123\n"+
-						"  item_id=789123\n"+
-						"  updated_field={\"id\": 198354254, \"value\": 18498754}\n\n\n"+
-						"Let me start by listing your projects now!", owner, ownerType, owner, ownerType, owner, ownerType, owner, ownerType)),
+					Content: mcp.NewTextContent(`Workflow example:
+1. list_projects → pick project_number
+2. list_project_fields → build field map {name: {id, type}}
+3. Build query (e.g. is:issue sprint:@current priority:high updated:>@today-7d)
+4. list_project_items with field IDs → paginate fully (loop until hasNextPage=false)
+5. Optional: get_project_item for specific item details
+6. Optional: add_project_item to add issue/PR to project
+7. Optional: update_project_item to change field values for an item
+8. Optional: delete_project_item to remove from an item from project
+
+Important:
+- Iteration filter must match existing field name
+- Keep fields parameter consistent across pages
+- Summarize only if explicitly asked
+- item_id for updates/deletes comes from list_project_items response
+- content.id in items is the underlying issue/PR ID (use with add_project_item)`),
 				},
 				{
 					Role:    "user",
-					Content: mcp.NewTextContent("What if I need more details about the items, like recent comments or linked pull requests?"),
+					Content: mcp.NewTextContent("How do I handle pagination?"),
 				},
 				{
 					Role: "assistant",
-					Content: mcp.NewTextContent("**📝 Accessing Underlying Issue/PR Details**\n\n" +
-						"Project items contain basic content info, but for detailed information you need to use issue/PR tools:\n\n" +
-						"**From project items, extract:**\n" +
-						"- content.repository.name and content.repository.owner.login\n" +
-						"- content.number (the issue/PR number)\n" +
-						"- content_type (\"Issue\" or \"PullRequest\")\n\n" +
-						"**Then use these tools for details:**\n\n" +
-						"1. **Get full issue/PR details:**\n" +
-						"   - **get_issue** owner=repo_owner repo=repo_name issue_number=123\n" +
-						"   - Returns: full body, labels, assignees, milestone, etc.\n\n" +
-						"2. **Get recent comments:**\n" +
-						"   - **list_comments** owner=repo_owner repo=repo_name issue_number=123\n" +
-						"   - Add since parameter to filter recent comments\n\n" +
-						"3. **Get issue events:**\n" +
-						"   - **list_issue_events** owner=repo_owner repo=repo_name issue_number=123\n" +
-						"   - Shows timeline: assignments, label changes, status updates\n\n" +
-						"4. **For pull requests specifically:**\n" +
-						"   - **get_pull_request** owner=repo_owner repo=repo_name pull_number=123\n" +
-						"   - **list_pull_request_reviews** for review status\n\n" +
-						"**💡 Example:** To check for blockers in comments:\n" +
-						"1. Get project items with query=\"assignee:@me is:open\"\n" +
-						"2. For each item, extract repository and issue number from content\n" +
-						"3. Use **list_comments** to get recent comments\n" +
-						"4. Search comments for keywords like \"blocked\", \"blocker\", \"waiting\""),
+					Content: mcp.NewTextContent(`Pagination with list_project_items:
+1. Make initial call with query, fields, per_page parameters
+2. Check response pageInfo.hasNextPage
+3. If true: call again with same query/fields/per_page + after=pageInfo.nextCursor
+4. Repeat step 2-3 until hasNextPage=false
+5. Collect all items from all pages before counting/analyzing
+
+Critical: Do NOT change query, fields, or per_page between pages. Always include same field IDs on every page if you need field values.`),
+				},
+				{
+					Role:    "user",
+					Content: mcp.NewTextContent("How do I get more details about items?"),
+				},
+				{
+					Role: "assistant",
+					Content: mcp.NewTextContent(`Getting additional item details:
+
+- First inspect item's content object for info, e.g. title, assignees, labels
+- If additional detail is needed, and relevant fields are present from list_project_fields, include their IDs in list_project_items and request with list_project_items again.
+- If more detail needed, use separate issue/PR tools`),
+				},
+				{
+					Role: "assistant",
+					Content: mcp.NewTextContent(`Query patterns for list_project_items:
+
+Common scenarios:
+- Blocked issues: is:issue (label:blocked OR status:"Blocked")
+- Overdue tasks: is:issue due-date:<@today state:open
+- PRs ready for review: is:pr review-status:"Ready for Review" state:open
+- Stale issues: is:issue updated:<@today-30d state:open
+- High priority bugs: is:issue label:bug priority:high state:open
+- Team sprint PRs: is:pr team-name:"Backend Team" sprint:@current
+
+Rules:
+- Summarize only if user requests it with verbs like "analyze", "summarize", "report"
+- Deduplicate by item.id before counting totals
+- Quote multi-word values: status:"In Progress"
+- Never invent field names or IDs - always verify with list_project_fields first
+- Use explicit is:issue or is:pr unless user wants mixed items`),
 				},
 			}
 			return &mcp.GetPromptResult{

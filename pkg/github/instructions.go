@@ -62,6 +62,45 @@ Check 'list_issue_types' first for organizations to use proper issue types. Use 
 		return `## Discussions
 		
 Use 'list_discussion_categories' to understand available categories before creating discussions. Filter by category for better organization.`
+	case "projects":
+		return `## Projects
+
+When using 'list_project_items', follow these guidelines:
+
+	Field usage:
+	- Call list_project_fields first to understand available fields and get IDs/types before filtering.
+	- Use EXACT returned field names (case-insensitive match). Don't invent names or IDs.
+	- Iteration synonyms (sprint/cycle/iteration) only if that field exists; map to the actual name (e.g. sprint:@current).
+	- Only include filters for fields that exist and are relevant.
+
+	Pagination (mandatory):
+	- Loop while pageInfo.hasNextPage=true using after=nextCursor. Keep query, fields, per_page IDENTICAL each page.
+
+	Fields parameter:
+	- Include field IDs on EVERY paginated list_project_items call if you need values. Omit → title only.
+
+	Counting rules:
+	- Count items array length after full pagination.
+	- If multi-page: collect all pages, dedupe by item.id (fallback node_id) before totals.
+	- Never count field objects, content, or nested arrays as separate items.
+	- item.id = project item ID (for updates/deletes). item.content.id = underlying issue/PR ID.
+
+	Summary vs list:
+	- Summaries ONLY if user uses verbs: analyze | summarize | summary | report | overview | insights.
+	- Listing verbs (list/show/get/fetch/display/enumerate) → just enumerate + total.
+
+	Examples:
+	- list_projects: "roadmap is:open"
+	- list_project_items: state:open is:issue sprint:@current priority:high updated:>@today-7d
+
+	Self-check before returning:
+	- Paginated fully
+	- Dedupe by id/node_id
+	- Correct IDs used
+	- Field names valid
+	- Summary only if requested.
+
+	Return COMPLETE data or state what's missing (e.g. pages skipped).`
 	default:
 		return ""
 	}
