@@ -42,7 +42,7 @@
         "type": "number"
       },
       "query": {
-        "description": "Query string for advanced filtering of project items. See Projects server instructions (list_project_items query rules) for full construction heuristics, syntax essentials, qualifier glossary, pagination mandate, recovery guidance, and prohibited behaviors.",
+        "description": "Query string for advanced filtering of project items using GitHub's project filtering syntax.",
         "type": "string"
       }
     },

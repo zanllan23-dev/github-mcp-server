@@ -845,7 +845,7 @@ Options are:
   - `owner_type`: Owner type (string, required)
   - `per_page`: Results per page (max 50) (number, optional)
   - `project_number`: The project's number. (number, required)
-  - `query`: Query string for advanced filtering of project items. See Projects server instructions (list_project_items query rules) for full construction heuristics, syntax essentials, qualifier glossary, pagination mandate, recovery guidance, and prohibited behaviors. (string, optional)
+  - `query`: Query string for advanced filtering of project items using GitHub's project filtering syntax. (string, optional)
 
 - **list_projects** - List projects
   - `after`: Forward pagination cursor from previous pageInfo.nextCursor. (string, optional)
@@ -853,14 +853,7 @@ Options are:
   - `owner`: If owner_type == user it is the handle for the GitHub user account. If owner_type == org it is the name of the organization. The name is not case sensitive. (string, required)
   - `owner_type`: Owner type (string, required)
   - `per_page`: Results per page (max 50) (number, optional)
-  - `query`: Filter projects by a search query
-				
-Scope: title text + open/closed state.
-PERMITTED qualifiers: is:open, is:closed (state), simple title terms.
-FORBIDDEN: is:issue, is:pr, assignee:, label:, status:, sprint-name:, parent-issue:, team-name:, priority:, etc.
-Examples:
-	- roadmap is:open
-	- is:open feature planning (string, optional)
+  - `query`: Filter projects by title text and open/closed state; permitted qualifiers: is:open, is:closed; examples: "roadmap is:open", "is:open feature planning". (string, optional)
 
 - **update_project_item** - Update project item
   - `item_id`: The unique identifier of the project item. This is not the issue or pull request ID. (number, required)

@@ -65,37 +65,19 @@ Use 'list_discussion_categories' to understand available categories before creat
 	case "projects":
 		return `## Projects
 
-Read Tools:
-	- list_projects
-	- get_project
-	- list_project_fields
-	- get_project_field
-	- list_project_items
-	- get_project_item
-Write Tools:
-	- add_project_item
-	- update_project_item
-	- delete_project_item
+Workflow: 1) list_project_fields (get field IDs), 2) list_project_items (with pagination), 3) optional updates.
 
 Field usage:
 	- Call list_project_fields first to understand available fields and get IDs/types before filtering.
 	- Use EXACT returned field names (case-insensitive match). Don't invent names or IDs.
-	- Iteration synonyms (sprint/cycle/iteration) only if that field exists; map to the actual name (e.g. sprint:@current).
+	- Iteration synonyms (sprint/cycle) only if that field exists; map to the actual name (e.g. sprint:@current).
 	- Only include filters for fields that exist and are relevant.
 
 Pagination (mandatory):
-	Forward (normal) flow:
 	- Loop while pageInfo.hasNextPage=true using after=pageInfo.nextCursor.
 	- Keep query, fields, per_page IDENTICAL on every page.
-	Backward (rare) flow:
 	- Use before=pageInfo.prevCursor only when explicitly navigating to a previous page.
-	Parameters:
-	- per_page: results per page (max 50). Choose a stable value; do not change mid-sequence.
-	- after: forward cursor from prior response (pageInfo.nextCursor).
-	- before: backward cursor from prior response (pageInfo.prevCursor); seldom needed.
-
-Fields parameter:
-	- Include field IDs on EVERY paginated list_project_items call if you need values. Omit → title only.
+	- Do not analyze until ALL pages fetched.
 
 Counting rules:
 	- Count items array length after full pagination.
@@ -107,10 +89,6 @@ Summary vs list:
 	- Summaries ONLY if user uses verbs: analyze | summarize | summary | report | overview | insights.
 	- Listing verbs (list/show/get/fetch/display/enumerate) → enumerate + total.
 
-Examples:
-	- list_projects: "roadmap is:open"
-	- list_project_items: state:open is:issue sprint:@current priority:high updated:>@today-7d
-
 Self-check before returning:
 	- Paginated fully
 	- Dedupe by id/node_id
@@ -121,7 +99,7 @@ Self-check before returning:
 Return COMPLETE data or state what's missing (e.g. pages skipped).
 
 list_project_items query rules:
-Query string - For advanced filtering of project items using GitHub's search syntax:
+Query string - For advanced filtering of project items using GitHub's project filtering syntax:
 
 MUST reflect user intent; strongly prefer explicit content type if narrowed:
 	- "open issues" → state:open is:issue
@@ -153,9 +131,6 @@ Common Qualifier Glossary (items):
    is:issue | is:pr | state:open|closed|merged | assignee:@me|username | label:NAME | status:VALUE |
    priority:p1|high | sprint-name:@current | team-name:"Backend Team" | parent-issue:"org/repo#123" |
    updated:>@today-7d | title:*text* | -label:wontfix | label:bug,critical | no:assignee | has:label
-
-Pagination Mandate:
-   Do not analyze until ALL pages fetched (loop while pageInfo.hasNextPage=true). Always reuse identical query, fields, per_page.
 
 Never:
    - Infer field IDs; fetch via list_project_fields.

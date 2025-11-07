@@ -41,14 +41,7 @@ func ListProjects(getClient GetClientFn, t translations.TranslationHelperFunc) (
 				mcp.Description("If owner_type == user it is the handle for the GitHub user account. If owner_type == org it is the name of the organization. The name is not case sensitive."),
 			),
 			mcp.WithString("query",
-				mcp.Description(`Filter projects by a search query
-				
-Scope: title text + open/closed state.
-PERMITTED qualifiers: is:open, is:closed (state), simple title terms.
-FORBIDDEN: is:issue, is:pr, assignee:, label:, status:, sprint-name:, parent-issue:, team-name:, priority:, etc.
-Examples:
-	- roadmap is:open
-	- is:open feature planning`),
+				mcp.Description(`Filter projects by title text and open/closed state; permitted qualifiers: is:open, is:closed; examples: "roadmap is:open", "is:open feature planning".`),
 			),
 			mcp.WithNumber("per_page",
 				mcp.Description(fmt.Sprintf("Results per page (max %d)", MaxProjectsPerPage)),
@@ -396,7 +389,7 @@ func ListProjectItems(getClient GetClientFn, t translations.TranslationHelperFun
 				mcp.Description("The project's number."),
 			),
 			mcp.WithString("query",
-				mcp.Description(`Query string for advanced filtering of project items. See Projects server instructions (list_project_items query rules) for full construction heuristics, syntax essentials, qualifier glossary, pagination mandate, recovery guidance, and prohibited behaviors.`),
+				mcp.Description(`Query string for advanced filtering of project items using GitHub's project filtering syntax.`),
 			),
 			mcp.WithNumber("per_page",
 				mcp.Description(fmt.Sprintf("Results per page (max %d)", MaxProjectsPerPage)),

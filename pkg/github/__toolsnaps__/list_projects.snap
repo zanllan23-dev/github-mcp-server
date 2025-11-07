@@ -31,7 +31,7 @@
         "type": "number"
       },
       "query": {
-        "description": "Filter projects by a search query\n\t\t\t\t\nScope: title text + open/closed state.\nPERMITTED qualifiers: is:open, is:closed (state), simple title terms.\nFORBIDDEN: is:issue, is:pr, assignee:, label:, status:, sprint-name:, parent-issue:, team-name:, priority:, etc.\nExamples:\n\t- roadmap is:open\n\t- is:open feature planning",
+        "description": "Filter projects by title text and open/closed state; permitted qualifiers: is:open, is:closed; examples: \"roadmap is:open\", \"is:open feature planning\".",
         "type": "string"
       }
     },
