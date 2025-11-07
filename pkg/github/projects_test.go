@@ -668,12 +668,7 @@ func Test_ListProjectItems(t *testing.T) {
 					mock.EndpointPattern{Pattern: "/orgs/{org}/projectsV2/{project}/items", Method: http.MethodGet},
 					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						q := r.URL.Query()
-<<<<<<< HEAD
-						fieldParams := q.Get("fields")
-						if fieldParams == "123,456,789" {
-=======
 						if q.Get("fields") == "123,456,789" {
->>>>>>> 1235e58 (pagination, prompt updates)
 							w.WriteHeader(http.StatusOK)
 							_, _ = w.Write(mock.MustMarshal(orgItems))
 							return
@@ -875,12 +870,7 @@ func Test_GetProjectItem(t *testing.T) {
 					mock.EndpointPattern{Pattern: "/orgs/{org}/projectsV2/{project}/items/{item_id}", Method: http.MethodGet},
 					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						q := r.URL.Query()
-<<<<<<< HEAD
-						fieldParams := q.Get("fields")
-						if fieldParams == "123,456" {
-=======
 						if q.Get("fields") == "123,456" {
->>>>>>> 1235e58 (pagination, prompt updates)
 							w.WriteHeader(http.StatusOK)
 							_, _ = w.Write(mock.MustMarshal(orgItem))
 							return
